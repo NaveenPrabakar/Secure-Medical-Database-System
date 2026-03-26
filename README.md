@@ -1,2 +1,4 @@
-# 459-Project
-459 Cloud project
+﻿Secure Medical Database System
+
+Backend: FastAPI
+Frontend: Vite + React + TypeScript
