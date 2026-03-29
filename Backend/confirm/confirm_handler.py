@@ -33,48 +33,40 @@ def get_secret_hash(username):
     ).digest()
     return base64.b64encode(dig).decode()
 
-def login_handler(event, context):
+def confirm_signup_handler(event, context):
     try:
         if "body" not in event:
             return _response(400, {"error": "Missing request body"})
 
         body = json.loads(event["body"] or "{}")
         email = body.get("email")
-        password = body.get("password")
+        code = body.get("confirmation_code")
 
-        if not email or not password:
-            return _response(400, {"error": "Email and password required"})
+        if not email or not code:
+            return _response(400, {"error": "Email and confirmation code required"})
 
-        auth_params = {
-            "USERNAME": email,
-            "PASSWORD": password
-        }
-
-        secret_hash = get_secret_hash(email)
-        if secret_hash:
-            auth_params["SECRET_HASH"] = secret_hash
-
-        # USER_PASSWORD_AUTH flow
-        response = cognito.initiate_auth(
+        # Call Cognito to confirm signup
+        cognito.confirm_sign_up(
             ClientId=CLIENT_ID,
-            AuthFlow="USER_PASSWORD_AUTH",
-            AuthParameters=auth_params
+            Username=email,
+            ConfirmationCode=code,
+            SecretHash=get_secret_hash(email),
+            ForceAliasCreation=False
         )
 
-        return _response(200, {
-            "message": "Login successful",
-            "id_token": response["AuthenticationResult"]["IdToken"],
-            "access_token": response["AuthenticationResult"]["AccessToken"],
-            "refresh_token": response["AuthenticationResult"]["RefreshToken"],
-            "expires_in": response["AuthenticationResult"]["ExpiresIn"],
-            "token_type": response["AuthenticationResult"]["TokenType"]
-        })
+        return _response(200, {"message": "Signup confirmed. You may now log in."})
 
-    except cognito.exceptions.NotAuthorizedException:
-        return _response(400, {"error": "Incorrect username or password"})
+    except cognito.exceptions.CodeMismatchException:
+        return _response(400, {"error": "Invalid confirmation code"})
 
-    except cognito.exceptions.UserNotConfirmedException:
-        return _response(400, {"error": "User not confirmed. Verify email first."})
+    except cognito.exceptions.ExpiredCodeException:
+        return _response(400, {"error": "Confirmation code expired"})
+
+    except cognito.exceptions.UserNotFoundException:
+        return _response(400, {"error": "User not found"})
+
+    except cognito.exceptions.UserAlreadyConfirmedException:
+        return _response(200, {"message": "User already confirmed"})
 
     except ClientError as e:
         print("Cognito ClientError:", e.response["Error"]["Message"])
