@@ -1,4 +1,4 @@
-﻿import { useState } from 'react'
+import { useState } from 'react'
 
 type LoginResponse = {
   access_token?: string
@@ -63,7 +63,9 @@ export default function App() {
         <form onSubmit={handleLogin} className="stack">
           <input name="email" type="email" placeholder="email" required />
           <input name="password" type="password" placeholder="password" required />
-          <button type="submit">Sign in</button>
+          <button type="submit" className="sign-in-btn">
+            Sign in
+          </button>
         </form>
         <pre className="result">{loginResult ? JSON.stringify(loginResult, null, 2) : '—'}</pre>
       </section>

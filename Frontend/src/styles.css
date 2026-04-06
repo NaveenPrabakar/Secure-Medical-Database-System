@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   color: #1b1f23;
   background: #eef2f7;
@@ -33,6 +33,13 @@ body {
 .stack {
   display: grid;
   gap: 10px;
+}
+
+.sign-in-btn {
+  justify-self: center;
+  width: fit-content;
+  min-width: 8.5rem;
+  padding-inline: 1.25rem;
 }
 
 .row {
