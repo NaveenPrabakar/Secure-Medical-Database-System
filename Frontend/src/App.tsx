@@ -17,7 +17,7 @@ type PatientsResponse = {
   items: Patient[]
 }
 
-const apiBase = 'http://localhost:8000/api/v1'
+const apiBase = 'https://58rcz6xwc9.execute-api.us-east-2.amazonaws.com/Prod'
 
 export default function App() {
   const [loginResult, setLoginResult] = useState<LoginResponse | null>(null)
@@ -30,7 +30,7 @@ export default function App() {
     const formData = new FormData(form)
     const payload = Object.fromEntries(formData.entries())
 
-    const res = await fetch(`${apiBase}/auth/login`, {
+    const res = await fetch(`${apiBase}/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -64,8 +64,7 @@ export default function App() {
           <input name="email" type="email" placeholder="email" required />
           <input name="password" type="password" placeholder="password" required />
           <button type="submit" className="sign-in-btn">
-            Sign in
-          </button>
+            LOGIN          </button>
         </form>
         <pre className="result">{loginResult ? JSON.stringify(loginResult, null, 2) : '—'}</pre>
       </section>
