@@ -54,7 +54,7 @@ export const ConfirmProvider: React.FC<{ children: React.ReactNode }> = ({ child
     })
 
     try {
-      const res = await fetch(`${apiBase}/confirm`, {
+      const res = await fetch(`${apiBase}/signup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password })

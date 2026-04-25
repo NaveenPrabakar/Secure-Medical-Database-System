@@ -17,6 +17,8 @@ def _response(status, body):
         "headers": {
             "Content-Type": "application/json",
             "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "OPTIONS,POST",
+            "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
             "Access-Control-Allow-Credentials": "true"
         },
         "body": json.dumps(body)
@@ -34,6 +36,20 @@ def get_secret_hash(username):
     return base64.b64encode(dig).decode()
 
 def confirm_signup_handler(event, context):
+    # Handle preflight OPTIONS request
+    if event.get("httpMethod") == "OPTIONS":
+        return {
+            "statusCode": 200,
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "OPTIONS,POST",
+                "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
+                "Access-Control-Allow-Credentials": "true"
+            },
+            "body": ""
+        }
+    
     try:
         if "body" not in event:
             return _response(400, {"error": "Missing request body"})
