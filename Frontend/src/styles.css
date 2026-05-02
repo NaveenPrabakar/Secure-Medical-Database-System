@@ -210,6 +210,16 @@ a {
   transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
 }
 
+.patient-action-button {
+  border: 0;
+  background: linear-gradient(180deg, var(--primary), var(--primary-deep));
+  color: white;
+  padding: 8px 12px;
+  border-radius: 14px;
+  font-weight: 500;
+  transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+
 .mode-button {
   padding: 12px 14px;
   color: var(--muted);
@@ -274,12 +284,14 @@ a {
 }
 
 .primary-button:hover,
+.patient-action-button:hover,
 .secondary-button:hover,
 .mode-button:hover {
   transform: translateY(-1px);
 }
 
 .primary-button:disabled,
+.patient-action-button:disabled,
 .secondary-button:disabled {
   opacity: 0.7;
   cursor: not-allowed;
@@ -362,6 +374,10 @@ a {
   align-items: start;
 }
 
+.dashboard-grid.single-column {
+  grid-template-columns: 1fr;
+}
+
 .panel-card {
   border-radius: 24px;
   padding: 20px;
@@ -372,12 +388,19 @@ a {
 }
 
 .card-header,
-.lookup-form,
 .action-row,
 .image-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.lookup-form {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-start;
   gap: 12px;
   flex-wrap: wrap;
 }
@@ -390,6 +413,119 @@ a {
 
 .lookup-form label {
   flex: 1 1 220px;
+}
+
+.lookup-form .secondary-button {
+  min-height: 51px;
+}
+
+.patient-results {
+  display: grid;
+  gap: 10px;
+}
+
+.patient-result-button {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 14px 16px;
+  background: #fbfdfe;
+  color: var(--ink);
+  text-align: left;
+  display: grid;
+  gap: 4px;
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+}
+
+.patient-result-button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(15, 107, 120, 0.32);
+  box-shadow: 0 12px 24px rgba(18, 50, 76, 0.08);
+}
+
+.patient-result-button span {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.record-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: #fbfdfe;
+}
+
+.record-toolbar div {
+  display: grid;
+  gap: 4px;
+}
+
+.record-toolbar strong {
+  color: var(--ink);
+}
+
+.record-toolbar span {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.patient-summary {
+  display: grid;
+  gap: 14px;
+}
+
+.summary-group {
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 16px;
+  background: #fbfdfe;
+}
+
+.summary-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.summary-group h4 {
+  margin: 0;
+  color: var(--ink);
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.summary-item {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #eef6f8;
+}
+
+.summary-item span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.summary-item strong {
+  color: var(--ink);
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
 }
 
 .field-group {
@@ -428,6 +564,35 @@ a {
 .file-picker strong {
   color: var(--muted);
   font-size: 0.92rem;
+}
+
+.selected-scan-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: #eef6f8;
+}
+
+.selected-scan-card strong {
+  min-width: 0;
+  color: var(--ink);
+  font-size: 0.92rem;
+  overflow-wrap: anywhere;
+}
+
+.selected-scan-card button {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 999px;
+  background: #dbe9ed;
+  color: var(--ink);
+  font-weight: 800;
+  line-height: 1;
 }
 
 .images-list {
@@ -507,7 +672,8 @@ a {
   }
 
   .mode-switch,
-  .field-grid {
+  .field-grid,
+  .summary-grid {
     grid-template-columns: 1fr;
   }
 }

@@ -1,5 +1,6 @@
 import base64
 import boto3
+import json
 import os
 import uuid
 from datetime import datetime, timezone
@@ -47,9 +48,38 @@ def write_log(staff_name, patient_id, image_key, status, detail):
     except Exception as exc:
         print(f"Failed to write audit log: {exc}")
 
+def response(status, body):
+    return {
+        "statusCode": status,
+        "headers": {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token",
+            "Access-Control-Allow-Methods": "OPTIONS,POST,DELETE",
+            "Content-Type": "application/json"
+        },
+        "body": json.dumps(body)
+    }
+
 def lambda_handler(event, context):
-    patient_id = event['queryStringParameters']['patient_id']
-    staff_name = get_staff_name(event)
+    method = event.get("httpMethod") or event.get("requestContext", {}).get("http", {}).get("method")
+    query = event.get('queryStringParameters') or {}
+    patient_id = query.get('patient_id')
+
+    if method == "OPTIONS":
+        return response(200, {})
+
+    if method == "DELETE":
+        key = query.get('key')
+        if not key:
+            return response(400, {"error": "Missing scan key"})
+        if patient_id and not key.startswith(f"mri/{patient_id}/"):
+            return response(400, {"error": "Scan key does not match patient"})
+
+        s3.delete_object(Bucket=BUCKET, Key=key)
+        return response(200, {"message": "deleted", "key": key})
+
+    if not patient_id:
+        return response(400, {"error": "Missing patient_id"})
 
     try:
         body = event['body']
@@ -70,15 +100,11 @@ def lambda_handler(event, context):
             ServerSideEncryption='aws:kms'
         )
 
-        write_log(staff_name, patient_id, key, "SUCCESS", "Image uploaded successfully")
-
-        return {
-            "statusCode": 200,
-            "body": f"Uploaded to {key}"
-        }
+        return response(200, {
+            "message": "uploaded",
+            "key": key
+        })
     except Exception as exc:
-        write_log(staff_name, patient_id, None, "FAILED", str(exc))
-        return {
-            "statusCode": 500,
-            "body": str(exc)
-        }
+        staff_name = get_staff_name(event)
+        write_log(staff_name, patient_id, "", "FAILED", str(exc))
+        return response(500, {"error": "Failed to upload image"})

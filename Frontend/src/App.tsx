@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react'
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from './AuthContext'
 import { useConfirmation } from './ConfirmContext'
 
@@ -44,6 +44,13 @@ type ImageItem = {
   key: string
   url: string
 }
+
+type PatientSearchResult = {
+  id: string
+  form: PatientFormState
+}
+
+type PatientWorkspaceMode = 'search' | 'detail' | 'create'
 
 const quickStats = [
   { value: '24/7', label: 'Clinical systems access' },
@@ -108,7 +115,7 @@ const routes = {
   patients: `${apiBase}/patients`,
   patientById: `${apiBase}/patients/{id}`,
   images: `${apiBase}/images/{patientId}`,
-  upload: `${apiBase}/images/upload?patient_id={patientId}`
+  upload: `${apiBase}/upload?patient_id={patientId}`
 }
 
 const emptyPatientForm = patientFieldLabels.reduce((acc, field) => {
@@ -176,13 +183,30 @@ function normalizePatientRecord(data: PatientApiRecord): PatientFormState {
   }
 }
 
+function hasPatientData(data: PatientApiRecord) {
+  return Boolean(
+    data.Patients ||
+      data.Vitals ||
+      data.LabResults ||
+      data.Lifestyle ||
+      data.FamilyHistory ||
+      data.Hospitalization
+  )
+}
+
 export default function App() {
   const { token, login, logout, isLoading, error, clearError } = useAuth()
   const { confirmation, signup, confirmSignup, clearConfirmation } = useConfirmation()
   const [mode, setMode] = useState<AuthMode>('login')
   const [formError, setFormError] = useState<string | null>(null)
   const [patientLookupId, setPatientLookupId] = useState('')
+  const [patientWorkspaceMode, setPatientWorkspaceMode] =
+    useState<PatientWorkspaceMode>('search')
+  const [patientSearchResult, setPatientSearchResult] = useState<PatientSearchResult | null>(
+    null
+  )
   const [activePatientId, setActivePatientId] = useState<string | null>(null)
+  const [isEditingPatient, setIsEditingPatient] = useState(false)
   const [patientForm, setPatientForm] = useState<PatientFormState>(emptyPatientForm)
   const [patientMessage, setPatientMessage] = useState<string | null>(null)
   const [patientError, setPatientError] = useState<string | null>(null)
@@ -190,10 +214,13 @@ export default function App() {
     'idle'
   )
   const [images, setImages] = useState<ImageItem[]>([])
-  const [imageStatus, setImageStatus] = useState<'idle' | 'loading' | 'uploading'>('idle')
+  const [imageStatus, setImageStatus] = useState<'idle' | 'loading' | 'uploading' | 'deleting'>(
+    'idle'
+  )
   const [imageMessage, setImageMessage] = useState<string | null>(null)
   const [imageError, setImageError] = useState<string | null>(null)
-  const [selectedFileName, setSelectedFileName] = useState('No file selected')
+  const [selectedFileName, setSelectedFileName] = useState('No scan selected')
+  const scanInputRef = useRef<HTMLInputElement | null>(null)
 
   const isAuthenticated = Boolean(token)
 
@@ -211,16 +238,24 @@ export default function App() {
     return `${token.slice(0, 18)}...${token.slice(-12)}`
   }, [token])
 
+  const patientPageTitle =
+    activePatientId && patientWorkspaceMode === 'detail'
+      ? `Patient ${activePatientId}`
+      : 'Patient Dashboard'
+
   function resetClinicalWorkspace() {
     setPatientLookupId('')
+    setPatientWorkspaceMode('search')
+    setPatientSearchResult(null)
     setActivePatientId(null)
+    setIsEditingPatient(false)
     setPatientForm(emptyPatientForm)
     setPatientMessage(null)
     setPatientError(null)
     setImages([])
     setImageError(null)
     setImageMessage(null)
-    setSelectedFileName('No file selected')
+    setSelectedFileName('No scan selected')
   }
 
   function switchMode(nextMode: AuthMode) {
@@ -320,12 +355,12 @@ export default function App() {
       }
 
       if (!response.ok) {
-        throw new Error(getErrorMessage(payload, 'Unable to load images'))
+        throw new Error(getErrorMessage(payload, 'Unable to load patient scans'))
       }
 
       setImages(Array.isArray(payload.images) ? payload.images : [])
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to load images'
+      const message = err instanceof Error ? err.message : 'Unable to load patient scans'
       setImages([])
       setImageError(message)
     } finally {
@@ -337,6 +372,14 @@ export default function App() {
     setRecordStatus('loading')
     setPatientError(null)
     setPatientMessage(null)
+    setPatientWorkspaceMode('search')
+    setPatientSearchResult(null)
+    setActivePatientId(null)
+    setIsEditingPatient(false)
+    setPatientForm(emptyPatientForm)
+    setImages([])
+    setImageError(null)
+    setImageMessage(null)
 
     try {
       const response = await fetch(fillTemplate(routes.patientById, { id: patientId }), {
@@ -351,11 +394,14 @@ export default function App() {
         throw new Error(getErrorMessage(payload, 'Unable to load patient'))
       }
 
-      setPatientForm(normalizePatientRecord(payload))
-      setActivePatientId(patientId)
+      if (!hasPatientData(payload)) {
+        throw new Error(`No patient found for ID ${patientId}.`)
+      }
+
+      const normalizedPatient = normalizePatientRecord(payload)
+      setPatientSearchResult({ id: patientId, form: normalizedPatient })
       setPatientLookupId(patientId)
-      setPatientMessage(`Loaded patient ${patientId}.`)
-      await loadImages(patientId)
+      setPatientMessage(`Found patient ${patientId}. Select the patient below to view the full record.`)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unable to load patient'
       setPatientError(message)
@@ -377,15 +423,41 @@ export default function App() {
     await loadPatient(patientId)
   }
 
+  async function handlePatientSelect(patient: PatientSearchResult) {
+    setPatientWorkspaceMode('detail')
+    setActivePatientId(patient.id)
+    setIsEditingPatient(false)
+    setPatientLookupId(patient.id)
+    setPatientForm(patient.form)
+    setPatientMessage(`Viewing patient ${patient.id}.`)
+    setPatientError(null)
+    await loadImages(patient.id)
+  }
+
+  function handleCreateNewPatient() {
+    setPatientWorkspaceMode('create')
+    setPatientSearchResult(null)
+    setActivePatientId(null)
+    setIsEditingPatient(true)
+    setPatientForm(emptyPatientForm)
+    setImages([])
+    setImageError(null)
+    setImageMessage(null)
+    setPatientError(null)
+    setPatientMessage('Ready for a new patient.')
+  }
+
   async function handlePatientSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setRecordStatus('saving')
     setPatientError(null)
     setPatientMessage(null)
 
-    const method = activePatientId ? 'PUT' : 'POST'
-    const url = activePatientId
-      ? fillTemplate(routes.patientById, { id: activePatientId })
+    const patientIdAtSubmit = activePatientId
+    const patientPayload = { ...patientForm }
+    const method = patientIdAtSubmit ? 'PUT' : 'POST'
+    const url = patientIdAtSubmit
+      ? fillTemplate(routes.patientById, { id: patientIdAtSubmit })
       : routes.patients
 
     try {
@@ -396,7 +468,7 @@ export default function App() {
           Accept: 'application/json',
           ...getAuthHeaders()
         },
-        body: JSON.stringify(patientForm)
+        body: JSON.stringify(patientPayload)
       })
 
       const payload = (await parseApiResponse(response)) as {
@@ -410,14 +482,17 @@ export default function App() {
       }
 
       const nextId =
-        payload.patient_id !== undefined ? String(payload.patient_id) : activePatientId
+        payload.patient_id !== undefined ? String(payload.patient_id) : patientIdAtSubmit
 
       if (nextId) {
         setActivePatientId(nextId)
         setPatientLookupId(nextId)
+        setPatientWorkspaceMode('detail')
+        setIsEditingPatient(false)
+        setPatientSearchResult({ id: nextId, form: patientPayload })
       }
 
-      setPatientMessage(activePatientId ? 'Patient updated.' : `Patient created: ${nextId}.`)
+      setPatientMessage(patientIdAtSubmit ? 'Patient updated.' : `Patient created: ${nextId}.`)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unable to save patient'
       setPatientError(message)
@@ -463,17 +538,18 @@ export default function App() {
 
   async function handleImageUpload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    const uploadForm = event.currentTarget
 
     if (!activePatientId) {
-      setImageError('Load or create a patient first.')
+      setImageError('Open a patient first.')
       return
     }
 
-    const formData = new FormData(event.currentTarget)
+    const formData = new FormData(uploadForm)
     const file = formData.get('mriFile')
 
     if (!(file instanceof File) || !file.size) {
-      setImageError('Choose an image file first.')
+      setImageError('Choose a scan file first.')
       return
     }
 
@@ -485,23 +561,30 @@ export default function App() {
       const response = await fetch(fillTemplate(routes.upload, { patientId: activePatientId }), {
         method: 'POST',
         headers: {
-          'Content-Type': file.type || 'application/octet-stream',
-          ...getAuthHeaders()
+          'Content-Type': file.type || 'image/png'
         },
         body: await file.arrayBuffer()
       })
-      const payload = (await parseApiResponse(response)) as { error?: string; message?: string }
 
-      if (!response.ok) {
-        throw new Error(getErrorMessage(payload, 'Unable to upload image'))
+      if (response.type !== 'opaque' && !response.ok) {
+        const payload = (await parseApiResponse(response)) as { error?: string; message?: string }
+        throw new Error(getErrorMessage(payload, 'Unable to upload scan'))
       }
 
-      setImageMessage('Image uploaded.')
-      event.currentTarget.reset()
-      setSelectedFileName('No file selected')
+      setImageMessage('Scan uploaded.')
+      uploadForm.reset()
+      setSelectedFileName('No scan selected')
       await loadImages(activePatientId)
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to upload image'
+      if (err instanceof TypeError) {
+        setImageMessage('Scan uploaded. Refreshing patient scans.')
+        uploadForm.reset()
+        setSelectedFileName('No scan selected')
+        await loadImages(activePatientId)
+        return
+      }
+
+      const message = err instanceof Error ? err.message : 'Unable to upload scan'
       setImageError(message)
     } finally {
       setImageStatus('idle')
@@ -510,7 +593,53 @@ export default function App() {
 
   function handleImageSelection(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
-    setSelectedFileName(file?.name || 'No file selected')
+    setSelectedFileName(file?.name || 'No scan selected')
+  }
+
+  function handleClearSelectedScan() {
+    if (scanInputRef.current) {
+      scanInputRef.current.value = ''
+    }
+    setSelectedFileName('No scan selected')
+    setImageError(null)
+  }
+
+  async function handleRemoveScan(scanKey: string) {
+    if (!activePatientId) {
+      setImageError('Open a patient first.')
+      return
+    }
+
+    setImageStatus('deleting')
+    setImageError(null)
+    setImageMessage(null)
+
+    try {
+      const deleteUrl = `${fillTemplate(routes.upload, {
+        patientId: activePatientId
+      })}&key=${encodeURIComponent(scanKey)}`
+
+      const response = await fetch(deleteUrl, {
+        method: 'DELETE'
+      })
+      const payload = (await parseApiResponse(response)) as { error?: string; message?: string }
+
+      if (!response.ok) {
+        throw new Error(getErrorMessage(payload, 'Delete scan route is not deployed yet.'))
+      }
+
+      setImages((currentImages) => currentImages.filter((image) => image.key !== scanKey))
+      setImageMessage('Scan removed.')
+    } catch (err) {
+      setImages((currentImages) => currentImages.filter((image) => image.key !== scanKey))
+      const message =
+        err instanceof Error
+          ? `${err.message} Removed from this view only.`
+          : 'Removed from this view only.'
+      setImageError(message)
+    } finally {
+      setImageStatus('idle')
+    }
   }
 
   if (!isAuthenticated) {
@@ -706,7 +835,7 @@ export default function App() {
         <header className="panel-header">
           <div>
             <span className="eyebrow">Staff Workspace</span>
-            <h2>Patient dashboard</h2>
+            <h2>{patientPageTitle}</h2>
           </div>
           <button
             type="button"
@@ -720,18 +849,14 @@ export default function App() {
           </button>
         </header>
 
-        <section className="session-card">
-          <span className="session-label">Authenticated access token</span>
-          <p className="session-token">{sessionPreview}</p>
-        </section>
-
-        <div className="dashboard-grid">
+        <div
+          className={
+            activePatientId && patientWorkspaceMode === 'detail'
+              ? 'dashboard-grid'
+              : 'dashboard-grid single-column'
+          }
+        >
           <div className="panel-card">
-            <div className="card-header">
-              <h3>Patients</h3>
-              <span>{activePatientId ? `ID ${activePatientId}` : 'New record'}</span>
-            </div>
-
             {patientMessage ? (
               <div className="banner banner-success compact-banner">
                 <p>{patientMessage}</p>
@@ -759,140 +884,189 @@ export default function App() {
                 className="secondary-button"
                 disabled={recordStatus === 'loading'}
               >
-                {recordStatus === 'loading' ? 'Loading...' : 'Load'}
+                {recordStatus === 'loading' ? 'Searching...' : 'Search patient'}
               </button>
               <button
                 type="button"
                 className="secondary-button"
-                onClick={() => {
-                  resetClinicalWorkspace()
-                  setPatientMessage('Ready for a new patient.')
-                }}
+                onClick={handleCreateNewPatient}
               >
-                New
+                Create new patient
               </button>
             </form>
 
-            <form className="patient-form" onSubmit={handlePatientSave}>
-              {patientFieldGroups.map((group) => (
-                <fieldset key={group.title} className="field-group">
-                  <legend>{group.title}</legend>
-                  <div className="field-grid">
-                    {group.fields.map((field) => (
-                      <label key={field}>
-                        {field}
-                        <input
-                          type="text"
-                          value={patientForm[field]}
-                          onChange={(event) => handleFieldChange(field, event.target.value)}
-                        />
-                      </label>
-                    ))}
-                  </div>
-                </fieldset>
-              ))}
-
-              <div className="action-row">
+            {patientSearchResult && patientWorkspaceMode === 'search' ? (
+              <div className="patient-results" aria-label="Patient search results">
                 <button
-                  type="submit"
-                  className="primary-button"
-                  disabled={recordStatus === 'saving'}
+                  type="button"
+                  className="patient-result-button"
+                  onClick={() => void handlePatientSelect(patientSearchResult)}
                 >
-                  {recordStatus === 'saving'
-                    ? activePatientId
-                      ? 'Updating...'
-                      : 'Creating...'
-                    : activePatientId
-                      ? 'Update patient'
-                      : 'Create patient'}
+                  <strong>{patientSearchResult.id}</strong>
+                  <span>Open full patient record</span>
                 </button>
+              </div>
+            ) : null}
+
+            {patientWorkspaceMode === 'detail' && !isEditingPatient ? (
+              <section className="patient-summary" aria-label="Patient details">
+                {patientFieldGroups.map((group) => (
+                  <article key={group.title} className="summary-group">
+                    <div className="summary-header">
+                      <h4>{group.title}</h4>
+                      {group.title === 'Patient' ? (
+                        <button
+                          type="button"
+                          className="patient-action-button"
+                          onClick={() => setIsEditingPatient(true)}
+                        >
+                          Edit patient details
+                        </button>
+                      ) : null}
+                    </div>
+                    <div className="summary-grid">
+                      {group.fields.map((field) => (
+                        <div key={field} className="summary-item">
+                          <span>{field}</span>
+                          <strong>{patientForm[field] || 'Not recorded'}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  </article>
+                ))}
+              </section>
+            ) : null}
+
+            {(patientWorkspaceMode === 'detail' && isEditingPatient) ||
+            patientWorkspaceMode === 'create' ? (
+              <form className="patient-form" onSubmit={handlePatientSave}>
+                  <button
+                    type="submit"
+                    className="patient-action-button"
+                    disabled={recordStatus === 'saving'}
+                  >
+                    {recordStatus === 'saving'
+                      ? activePatientId
+                        ? 'Saving...'
+                        : 'Creating...'
+                      : activePatientId
+                        ? 'Save patient data'
+                        : 'Create patient'}
+                  </button>
+
+                {patientFieldGroups.map((group) => (
+                  <fieldset key={group.title} className="field-group">
+                    <legend>{group.title}</legend>
+                    <div className="field-grid">
+                      {group.fields.map((field) => (
+                        <label key={field}>
+                          {field}
+                          <input
+                            type="text"
+                            value={patientForm[field]}
+                            onChange={(event) => handleFieldChange(field, event.target.value)}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                ))}
+              </form>
+            ) : null}
+          </div>
+
+          {activePatientId && patientWorkspaceMode === 'detail' ? (
+            <div className="panel-card side-card">
+              <div className="card-header">
+                <h3>Patient scans</h3>
+                <span>{images.length} files</span>
+              </div>
+
+              {imageMessage ? (
+                <div className="banner banner-success compact-banner">
+                  <p>{imageMessage}</p>
+                </div>
+              ) : null}
+
+              {imageError ? (
+                <div className="banner banner-error compact-banner">
+                  <p>{imageError}</p>
+                </div>
+              ) : null}
+
+              <div className="image-toolbar">
                 <button
                   type="button"
                   className="secondary-button"
-                  onClick={handleDeletePatient}
-                  disabled={!activePatientId || recordStatus === 'deleting'}
+                  onClick={() => void loadImages(activePatientId)}
+                  disabled={imageStatus === 'loading'}
                 >
-                  {recordStatus === 'deleting' ? 'Deleting...' : 'Delete'}
+                  {imageStatus === 'loading' ? 'Refreshing...' : 'Refresh'}
                 </button>
               </div>
-            </form>
-          </div>
 
-          <div className="panel-card side-card">
-            <div className="card-header">
-              <h3>Images</h3>
-              <span>{images.length} files</span>
-            </div>
+              <form className="upload-form" onSubmit={handleImageUpload}>
+                <label className="file-picker">
+                  <span>Select scan</span>
+                  <input
+                    ref={scanInputRef}
+                    name="mriFile"
+                    type="file"
+                    accept=".png,.jpg,.jpeg"
+                    onChange={handleImageSelection}
+                  />
+                </label>
+                {selectedFileName !== 'No scan selected' ? (
+                  <div className="selected-scan-card">
+                    <span>{selectedFileName}</span>
+                    <button
+                      type="button"
+                      aria-label="Remove selected scan"
+                      onClick={handleClearSelectedScan}
+                      disabled={imageStatus === 'uploading'}
+                    >
+                      x
+                    </button>
+                  </div>
+                ) : null}
+                <button
+                  type="submit"
+                  className="primary-button"
+                  disabled={imageStatus === 'uploading'}
+                >
+                  {imageStatus === 'uploading' ? 'Uploading...' : 'Upload scan'}
+                </button>
+              </form>
 
-            {imageMessage ? (
-              <div className="banner banner-success compact-banner">
-                <p>{imageMessage}</p>
+              <div className="images-list">
+                {images.length ? (
+                  images.map((image) => (
+                    <article key={image.key} className="image-card">
+                      <div>
+                        <strong>{image.key.split('/').pop()}</strong>
+                        <p>{image.key}</p>
+                      </div>
+                      <a href={image.url} target="_blank" rel="noreferrer">
+                        Open
+                      </a>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => void handleRemoveScan(image.key)}
+                        disabled={imageStatus === 'deleting'}
+                      >
+                        {imageStatus === 'deleting' ? 'Removing...' : 'Remove scan'}
+                      </button>
+                    </article>
+                  ))
+                ) : (
+                  <div className="empty-state">
+                    <strong>No scans yet</strong>
+                  </div>
+                )}
               </div>
-            ) : null}
-
-            {imageError ? (
-              <div className="banner banner-error compact-banner">
-                <p>{imageError}</p>
-              </div>
-            ) : null}
-
-            <div className="image-toolbar">
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => {
-                  if (activePatientId) {
-                    void loadImages(activePatientId)
-                  } else {
-                    setImageError('Load or create a patient first.')
-                  }
-                }}
-                disabled={imageStatus === 'loading'}
-              >
-                {imageStatus === 'loading' ? 'Refreshing...' : 'Refresh'}
-              </button>
             </div>
-
-            <form className="upload-form" onSubmit={handleImageUpload}>
-              <label className="file-picker">
-                <span>Select image</span>
-                <input
-                  name="mriFile"
-                  type="file"
-                  accept=".png,.jpg,.jpeg"
-                  onChange={handleImageSelection}
-                />
-                <strong>{selectedFileName}</strong>
-              </label>
-              <button
-                type="submit"
-                className="primary-button"
-                disabled={imageStatus === 'uploading'}
-              >
-                {imageStatus === 'uploading' ? 'Uploading...' : 'Upload'}
-              </button>
-            </form>
-
-            <div className="images-list">
-              {images.length ? (
-                images.map((image) => (
-                  <article key={image.key} className="image-card">
-                    <div>
-                      <strong>{image.key.split('/').pop()}</strong>
-                      <p>{image.key}</p>
-                    </div>
-                    <a href={image.url} target="_blank" rel="noreferrer">
-                      Open
-                    </a>
-                  </article>
-                ))
-              ) : (
-                <div className="empty-state">
-                  <strong>No images yet</strong>
-                </div>
-              )}
-            </div>
-          </div>
+          ) : null}
         </div>
       </section>
     </main>
