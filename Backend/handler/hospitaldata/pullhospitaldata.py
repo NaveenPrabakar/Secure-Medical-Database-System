@@ -4,12 +4,21 @@ import base64
 import boto3
 import pymysql
 import cryptography
+import uuid
+from datetime import datetime, timezone
 
 print("Layer loaded successfully")
+
+CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",  # or "http://localhost:5173" for stricter dev setup
+    "Access-Control-Allow-Headers": "Content-Type,Authorization",
+    "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS"
+}
 
 # ---------- AWS boto 3 clients ----------
 kms = boto3.client('kms')
 secrets_client = boto3.client('secretsmanager')
+dynamodb = boto3.resource("dynamodb", region_name="us-east-2")
 
 
 SECRET_NAME = os.environ['SECRET_NAME']
@@ -18,6 +27,7 @@ DB_HOST = os.environ['DB_HOST']
 DB_NAME = os.environ['DB_NAME']
 DB_PORT = int(os.environ.get('DB_PORT', 3306))
 KMS_KEY_ID = os.environ['KMS_KEY_ID']
+LOGS_TABLE = os.environ.get("LOGS_TABLE", "logs")
 
 # secrets manager (DB credentials)
 def get_db_secret():
@@ -26,6 +36,8 @@ def get_db_secret():
 
 def get_connection():
     secret = get_db_secret()
+
+    print(secret['username'], secret['password'])
 
     return pymysql.connect(
         host=DB_HOST,
@@ -68,6 +80,43 @@ def decrypt_value(ciphertext):
 
 def decrypt_row(row):
     return {k: decrypt_value(v) for k, v in row.items()}
+
+
+def get_staff_name(event):
+    headers = event.get("headers") or {}
+    query = event.get("queryStringParameters") or {}
+    authorizer = event.get("requestContext", {}).get("authorizer", {})
+    jwt_claims = authorizer.get("jwt", {}).get("claims", {})
+    lambda_claims = authorizer.get("claims", {})
+
+    return (
+        headers.get("x-staff-name")
+        or headers.get("X-Staff-Name")
+        or query.get("staffname")
+        or jwt_claims.get("email")
+        or jwt_claims.get("cognito:username")
+        or lambda_claims.get("email")
+        or lambda_claims.get("cognito:username")
+        or "unknown"
+    )
+
+
+def write_log(staff_name, action, patient_id, status, detail):
+    try:
+        table = dynamodb.Table(LOGS_TABLE)
+        table.put_item(
+            Item={
+                "staffname": staff_name,
+                "logid": str(uuid.uuid4()),
+                "action": action,
+                "patient_id": str(patient_id) if patient_id is not None else "unknown",
+                "status": status,
+                "detail": detail,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+        )
+    except Exception as exc:
+        print(f"Failed to write audit log: {exc}")
 
 
 # ---------- HELPERS ----------
@@ -295,6 +344,11 @@ def delete_patient_full(patient_id):
 
 
 def lambda_handler(event, context):
+    method = None
+    path = None
+    pid = None
+    staff_name = get_staff_name(event)
+
     try:
         # normalize method (REST API v1 + HTTP API v2)
         method = (
@@ -309,19 +363,34 @@ def lambda_handler(event, context):
         print("PATH:", path)
         print("PID:", pid)
 
+        if method == "OPTIONS":
+            return {
+                "statusCode": 204,
+                "headers": CORS_HEADERS,
+                "body": ""
+            }
+
         if method == "POST" and path == "/patients":
             body = json.loads(event.get("body", "{}"))
-            return response(201, create_patient_full(body))
+            result = create_patient_full(body)
+            write_log(staff_name, "CREATE_PATIENT", result.get("patient_id"), "SUCCESS", "Patient created")
+            return response(201, result)
 
         if method == "GET" and pid:
-            return response(200, get_patient_full(pid))
+            result = get_patient_full(pid)
+            write_log(staff_name, "READ_PATIENT", pid, "SUCCESS", "Patient record retrieved")
+            return response(200, result)
 
         if method == "PUT" and pid:
             body = json.loads(event.get("body", "{}"))
-            return response(200, update_patient_full(pid, body))
+            result = update_patient_full(pid, body)
+            write_log(staff_name, "UPDATE_PATIENT", pid, "SUCCESS", "Patient record updated")
+            return response(200, result)
 
         if method == "DELETE" and pid:
-            return response(200, delete_patient_full(pid))
+            result = delete_patient_full(pid)
+            write_log(staff_name, "DELETE_PATIENT", pid, "SUCCESS", "Patient record deleted")
+            return response(200, result)
 
         return response(404, {
             "error": "Route not found",
@@ -329,13 +398,23 @@ def lambda_handler(event, context):
         })
 
     except Exception as e:
+        action_map = {
+            "POST": "CREATE_PATIENT",
+            "GET": "READ_PATIENT",
+            "PUT": "UPDATE_PATIENT",
+            "DELETE": "DELETE_PATIENT"
+        }
+        write_log(staff_name, action_map.get(method, "UNKNOWN_ACTION"), pid, "FAILED", str(e))
         return response(500, {"error": str(e)})
 
 
 # ---------- RESPONSE ----------
-def response(status, body):
+def response(status_code, body):
     return {
-        "statusCode": status,
-        "headers": {"Content-Type": "application/json"},
+        "statusCode": status_code,
+        "headers": {
+            "Content-Type": "application/json",
+            **CORS_HEADERS
+        },
         "body": json.dumps(body)
     }
